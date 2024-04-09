@@ -28,6 +28,238 @@ from shapely.geometry import Polygon, Point
 
 ######################################################
 #
+# Function merge_files
+#
+######################################################
+
+def merge_files(merge_list, filename):
+
+    datasets = []
+    for m in merge_list:
+        print("[merge_files] === Opening %s" % m)
+        datasets.append(xr.open_dataset(m))
+
+    # merge the datasets
+    print("[merge_files] === Merging...")
+    ds_merged = xr.merge(datasets, compat='override')
+    
+    # Salva il dataset unito in un nuovo file NetCDF
+    print("[merge_files] === Saving to %s" % filename)    
+    ds_merged.to_netcdf(filename)
+
+        
+    
+######################################################
+#
+# Function gen_bathymetry
+#
+######################################################
+
+def gen_bathymetry(dataset, resolution, filename, mask):
+
+    # extract lat and lon data
+    print("[gen_bathymetry] === Reading lat and lon")
+    lon = dataset.variables['lon'][:]
+    lat = dataset.variables['lat'][:]
+    
+    # define the regular grid
+    print("[gen_bathymetry] === Creating the regular grid")
+    lon_min, lon_max, lat_min, lat_max = np.min(lon), np.max(lon), np.min(lat), np.max(lat)
+    lon_step, lat_step = resolution, resolution
+    new_lons = np.arange(lon_min, lon_max, lon_step)
+    new_lats = np.arange(lat_min, lat_max, lat_step)
+    lon_reg, lat_reg = np.meshgrid(new_lons, new_lats)
+    grid_values = np.full(lon_reg.shape, np.nan)
+
+    # map input data on the grid
+    points = np.column_stack((lon.flatten(), lat.flatten()))
+    values = dataset.variables['h']
+
+    # interpolate
+    grid_values = griddata(points, values, (lon_reg, lat_reg), method='linear') 
+        
+    # mask
+    bool_mask = np.isnan(mask)
+    grid_values[bool_mask] = np.nan
+    
+    # generate output file
+    print("[gen_bathymetry] === Generating NetCDF file...")    
+    ds = xr.Dataset(
+        {
+            'bathymetry': (('lat', 'lon'), grid_values)
+        },
+            coords={
+                'lon': ('lon', new_lons),
+                'lat': ('lat', new_lats),                
+            }
+    )
+    ds.to_netcdf(filename)    
+    print("[gen_bathymetry] === Bathymetry file ready!")
+
+    
+######################################################
+#
+# Function gen_4dvar
+#
+######################################################
+
+def gen_4dvar(dataset, resolution, filename, varname, mask):
+
+    # Extract data
+    print("[gen_4dvar] === Reading lat and lon")
+    lon = dataset.variables['lon'][:]
+    lat = dataset.variables['lat'][:]
+    
+    # Define the regular grid
+    print("[gen_4dvar] === Creating the regular grid")
+    lon_min, lon_max, lat_min, lat_max = np.min(lon), np.max(lon), np.min(lat), np.max(lat)
+    lon_step, lat_step = resolution, resolution
+    new_lons = np.arange(lon_min, lon_max, lon_step)
+    new_lats = np.arange(lat_min, lat_max, lat_step)
+    lon_reg, lat_reg = np.meshgrid(new_lons, new_lats)
+    grid_values = np.full(lon_reg.shape, np.nan)
+
+    # initialize an empty merge list
+    merge_list = []
+        
+    # build the mask
+    bool_mask = np.isnan(mask)                
+    
+    # iterate over time
+    for t in range(len(dataset.variables['time'])):
+        
+        # full_data = []
+        full_data = np.full((1, len(dataset.dimensions['siglay']), grid_values.shape[0], grid_values.shape[1]), np.nan)
+
+        # debug print
+        print("[gen_4dvar] === Processing time %s" % t)
+        
+        # iterate over depth
+        for d in range(len(dataset.dimensions['siglay'])):
+
+            # debug print
+            print("[gen_4dvar] === Processing siglay %s" % d)
+            
+            # map input data on the grid
+            points = np.column_stack((lon.flatten(), lat.flatten()))
+            values = dataset.variables[varname][t, d, :]
+            
+            # interpolate
+            grid_values = griddata(points, values, (lon_reg, lat_reg), method='linear')
+
+            # mask
+            grid_values[bool_mask] = np.nan
+            
+            # add this layer data to the full array
+            full_data[0,d,:,:] = grid_values
+
+        # determine output filename
+        output_path, output_basename = os.path.split(output_filename)
+        filename = os.path.join(output_path, f"{t:02d}_{varname}.nc")
+
+        # output to NetCDF
+        print("[gen_4dvar] === Generating NetCDF file %s" % filename)        
+        ds = xr.Dataset(
+            {
+                varname: (('time', 'depth', 'lat', 'lon'), full_data)
+            },
+            coords={
+                'lon': ('lon', new_lons),
+                'lat': ('lat', new_lats),
+                'time': ('time', [dataset.variables['time'][0]]),
+                'depth': ('depth', range(len(dataset.dimensions['siglay'])))
+            }
+        )
+    
+        # Save the dataset
+        ds.to_netcdf(filename)
+        merge_list.append(filename)
+        print("[gen_4dvar] === File %s ready!" % filename)
+
+    # return
+    return merge_list
+
+
+
+######################################################
+#
+# Function gen_3dvar
+#
+######################################################
+
+def gen_3dvar(dataset, resolution, filename, varname, mask):
+
+    # Extract data
+    print("[gen_3dvar] === Reading lat and lon")
+    lon = dataset.variables['lon'][:]
+    lat = dataset.variables['lat'][:]
+    
+    # Define the regular grid
+    print("[gen_3dvar] === Creating the regular grid")
+    lon_min, lon_max, lat_min, lat_max = np.min(lon), np.max(lon), np.min(lat), np.max(lat)
+    lon_step, lat_step = resolution, resolution
+    new_lons = np.arange(lon_min, lon_max, lon_step)
+    new_lats = np.arange(lat_min, lat_max, lat_step)
+    lon_reg, lat_reg = np.meshgrid(new_lons, new_lats)
+    grid_values = np.full(lon_reg.shape, np.nan)
+
+    # initialize an empty merge list
+    merge_list = []
+        
+    # build the mask
+    bool_mask = np.isnan(mask)                
+
+    # init full_data matrix
+    full_data = np.full((len(dataset.variables['time']), grid_values.shape[0], grid_values.shape[1]), np.nan)
+    
+    # iterate over time
+    for t in range(len(dataset.variables['time'])):
+
+        # debug print
+        print("[gen_3dvar] === Processing time %s" % t)
+
+        # map input data on the grid
+        points = np.column_stack((lon.flatten(), lat.flatten()))
+        values = dataset.variables[varname][t, :]
+            
+        # interpolate
+        grid_values = griddata(points, values, (lon_reg, lat_reg), method='linear')
+        
+        # mask
+        grid_values[bool_mask] = np.nan
+        
+        # add this layer data to the full array
+        full_data[t,:,:] = grid_values
+
+        # determine output filename
+        output_path, output_basename = os.path.split(output_filename)
+        filename = os.path.join(output_path, f"{t:02d}_{varname}.nc")
+
+    # output to NetCDF
+    print("[gen_3dvar] === Generating NetCDF file %s" % filename)        
+    ds = xr.Dataset(
+        {
+            varname: (('time', 'lat', 'lon'), full_data)
+        },
+        coords={
+            'lon': ('lon', new_lons),
+            'lat': ('lat', new_lats),
+            'time': ('time', dataset.variables['time'])
+        }
+    )
+    
+    # Save the dataset
+    ds.to_netcdf(filename)
+    merge_list.append(filename)
+    print("[gen_3dvar] === File %s ready!" % filename)
+    
+    # return
+    return merge_list
+
+
+
+######################################################
+#
 # Function gen_landsea_mask
 #
 ######################################################
@@ -65,7 +297,7 @@ def gen_landsea_mask(dataset, resolution, filename):
     ######################################################    
 
     # Iterate over triangles
-    print("[landsea] === Iterating over nv items...")
+    print("[gen_landsea_mask] === Iterating over nv items...")
 
     nv = dataset.variables['nv'][:].T - 1
     triangles = []
@@ -76,20 +308,20 @@ def gen_landsea_mask(dataset, resolution, filename):
         triangles.append(Polygon(vertices))
         
     # Create a GeoDataFrame to store triangles
-    print("[landsea] === Storing triangles in a GeoDataFrame...")    
+    print("[gen_landsea_mask] === Storing triangles in a GeoDataFrame...")    
     gdf_triangles = gpd.GeoDataFrame(geometry=triangles)
         
     # Converts the grid points of the regular grid to Shapely Point objects
-    print("[landsea] === Converting grid points in Shapely Points...")
+    print("[gen_landsea_mask] === Converting grid points in Shapely Points...")
     points = [Point(p) for p in points_regular_flat]
 
     # Create a GeoDataFrame for the Grid Points (and init to nan)
-    print("[landsea] === Storing grid points in a GeoDataFrame...")    
+    print("[gen_landsea_mask] === Storing grid points in a GeoDataFrame...")    
     gdf_points = gpd.GeoDataFrame(geometry=points)
     gdf_points['value'] = np.nan
 
     # Find grid points belonging to the triangles through the intersection (join) of gdf
-    print("[landsea] === Filling the triangles...")    
+    print("[gen_landsea_mask] === Filling the triangles...")    
     inner_points = gpd.sjoin(gdf_points, gdf_triangles, how="inner", predicate='within')
     gdf_points.loc[inner_points.index, 'value'] = 1
    
@@ -101,7 +333,7 @@ def gen_landsea_mask(dataset, resolution, filename):
     ######################################################
 
     # Prepare data to be stored on NetCDF file
-    print("[landsea] === Preparing data for output to NetCDF file...")    
+    print("[gen_landsea_mask] === Preparing data for output to NetCDF file...")    
     data = {
         'lat': gdf_points['geometry'].y,
         'lon': gdf_points['geometry'].x,
@@ -109,21 +341,21 @@ def gen_landsea_mask(dataset, resolution, filename):
     }
     gdf = gpd.GeoDataFrame(data, columns=['lat', 'lon', 'value'])
     
-    # Convert the pivot dataframe to a pd dataframe
+    # convert the pivot dataframe to a pd dataframe
     df = pd.DataFrame(gdf)
 
-    # Create a pivot table (useful for conversion)
+    # create a pivot table (useful for conversion)
     pivot_table = df.pivot(index='lat', columns='lon', values='value')
 
-    # Convert the pivot table to a numpy array
+    # convert the pivot table to a numpy array
     land_sea_mask = pivot_table.to_numpy()
 
-    # Save original coordinates
+    # save original coordinates
     latitudes = pivot_table.index.to_numpy()
     longitudes = pivot_table.columns.to_numpy()
     
-    # Salva il Dataset come file NetCDF
-    print("[landsea] === Generating NetCDF file...")    
+    # save to NetCDF
+    print("[gen_landsea_mask] === Generating NetCDF file...")    
     index = np.arange(len(gdf_points))
     ds = xr.Dataset(
         {
@@ -136,83 +368,11 @@ def gen_landsea_mask(dataset, resolution, filename):
                 'lat': ('lat', latitudes),                
             }
     )
-    
-    # Salva il Dataset come file NetCDF
     ds.to_netcdf(mask_filename)
-    
-    print("[landsea] === Land sea mask file ready!")
+    print("[gen_landsea_mask] === Land sea mask file ready!")
 
-    
-
-    
-
-# ######################################################
-# #
-# # Preliminary data extraction
-# #
-# ######################################################
-
-
-
-
-
-
-# # Assuming the first time step and depth layer
-# # TODO:
-# # make the script able to iterate over the depth layers
-# myvar = dataset.variables[var_to_extract][0, 0, :]
-
-
-
-
-# # initialize an array to hold the interpolated salinity data
-# # New shape will be (time, depth_levels, node)
-# myvar_ex = dataset.variables[var_to_extract]
-# salinity_interpolated = np.zeros((myvar_ex.shape[0], desired_depth_levels, myvar_ex.shape[2]))
-
-# # Example: Interpolating data for each node
-# h = dataset.variables['h']
-# original_data = dataset.variables[var_to_extract][0,:,:]
-# interpolated_myvar = np.full((original_data.shape[1], original_data.shape[0]), np.nan)
-
-# for node in range(len(h)):
-    
-#     # Original depth levels for this node, from 0 to h[node]
-#     original_depths = np.linspace(0, h[node], original_data.shape[1])
-
-#     # Data values for this node
-#     data_values = original_data[:, node]
-
-#     # Create interpolation function
-#     interp_func = interp1d(depths_scaled[:, node], data_values, bounds_error=False, fill_value="extrapolate")
-    
-#     # Interpolate to new depth levels
-#     interpolated_myvar[node, :] = interp_func(desired_depth_levels)
-
-
-
-
-# ######################################################
-# #
-# # Interpolate the variable requested by the user
-# #
-# ######################################################
-
-# # Debug print
-# print("[landsea] --- Interpolate variable %s on the regular grid" % var_to_extract)
-
-# # Interpolate salinity data onto the regular grid
-# myvar_interpolated = griddata(points_unstructured, myvar, (lon_reg, lat_reg), method='linear')
-
-# # Initialize a new array for the masked salinity data
-# myvar_masked = np.full(myvar_interpolated.shape, np.nan)
-
-# # Fill the masked salinity array with interpolated values where the land-sea mask is True (water)
-# myvar_masked[land_sea_mask_reg] = myvar_interpolated[land_sea_mask_reg]
-
-
-
-
+    # return the mask
+    return land_sea_mask
 
 
 ######################################################
@@ -258,14 +418,16 @@ if __name__ == "__main__":
 
     ######################################################
     #
-    # Input file opening
+    # Input file opening and initialization
     #
     ######################################################
 
     # open dataset
     print("[main] === Opening dataset...")
     input_dataset = nc.Dataset(input_filename)
-    
+
+    # init list of files
+    files_to_merge = []    
     
     ######################################################
     #
@@ -277,12 +439,72 @@ if __name__ == "__main__":
     print("[main] === Invoking gen_landsea_mask()")
     output_path, output_basename = os.path.split(output_filename)
     mask_filename = "%s/mask_%s" % (output_path, output_basename)
-    gen_landsea_mask(input_dataset, resolution_degrees, mask_filename)
+    mask = gen_landsea_mask(input_dataset, resolution_degrees, mask_filename)
+    files_to_merge.append(mask_filename)
 
+    ######################################################
+    #
+    # Generation of bathymetry
+    #
+    ######################################################
 
+    # generate the land sea mask
+    print("[main] === Invoking gen_bathymetry()")
+    output_path, output_basename = os.path.split(output_filename)
+    bathy_filename = "%s/bathy_%s" % (output_path, output_basename)    
+    gen_bathymetry(input_dataset, resolution_degrees, bathy_filename, mask)
+    files_to_merge.append(bathy_filename)
+
+    ######################################################
+    #
+    # Generation of 3d vars
+    #
+    ######################################################
+    
+    for v in variables:
+
+        # check if this variable depends on time and node
+        if len(input_dataset.variables[v].shape) == 2:
+
+            # debug print
+            print("[main] === Processing %s as a 3D var" % v)
+            
+            # if yes, treat it like a 3d var (node -> lat, lon)
+            tmp_merge_list = gen_3dvar(input_dataset, resolution_degrees, output_filename, v, mask)
+            for f in tmp_merge_list:
+                files_to_merge.append(f)
 
     
+    # ######################################################
+    # #
+    # # Generation of 4d vars
+    # #
+    # ######################################################
+    
+    # for v in variables:
 
+    #     # check if this variable depends on time, node and depth
+    #     if len(input_dataset.variables[v].shape) == 3:
+
+    #         # debug print
+    #         print("[main] === Processing %s as a 4D var" % v)
+            
+    #         # if yes, treat it like a 4d var (node -> lat, lon)
+    #         tmp_merge_list = gen_4dvar(input_dataset, resolution_degrees, output_filename, v, mask)
+    #         for f in tmp_merge_list:
+    #             files_to_merge.append(f)
+
+
+    # ######################################################
+    # #
+    # # Merge files
+    # #
+    # ######################################################
+
+    # print("[main] === Will merge:")
+    # merge_files(files_to_merge, output_filename)
+        
+            
     ######################################################
     #
     # End of business
