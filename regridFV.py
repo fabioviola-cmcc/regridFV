@@ -9,21 +9,17 @@
 import os
 import sys
 import getopt
-import traceback
-import pdb
 import numpy as np
+import pandas as pd
+import xarray as xr
 import netCDF4 as nc
-from scipy.spatial import cKDTree
-from scipy.interpolate import LinearNDInterpolator
+import geopandas as gpd
 from matplotlib.path import Path
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import ProcessPoolExecutor
+from scipy.spatial import cKDTree
 from scipy.interpolate import griddata
 from scipy.interpolate import interp1d
-import xarray as xr
-import geopandas as gpd
-import pandas as pd
 from shapely.geometry import Polygon, Point
+from scipy.interpolate import LinearNDInterpolator
 
 
 ######################################################
@@ -34,20 +30,27 @@ from shapely.geometry import Polygon, Point
 
 def merge_files(merge_list, filename):
 
+    """
+    As the name suggests, this function is used to merge
+    multiple NetCDF files into a single dataset
+    """
+
+    # open the datasets
     datasets = []
     for m in merge_list:
-        print("[merge_files] === Opening %s" % m)
         datasets.append(xr.open_dataset(m))
 
     # merge the datasets
-    print("[merge_files] === Merging...")
     ds_merged = xr.merge(datasets, compat='override')
     
-    # Salva il dataset unito in un nuovo file NetCDF
-    print("[merge_files] === Saving to %s" % filename)    
+    # save the new dataset into a single file
+    print("[merge_files] === Merged input files to %s" % filename)    
     ds_merged.to_netcdf(filename)
 
-        
+    # remove input files
+    for f in merge_list:
+        os.remove(f)
+    
     
 ######################################################
 #
@@ -55,7 +58,7 @@ def merge_files(merge_list, filename):
 #
 ######################################################
 
-def gen_bathymetry(dataset, resolution, filename, mask):
+def gen_bathymetry(dataset, resolution, filename, mask, interp):
 
     # extract lat and lon data
     print("[gen_bathymetry] === Reading lat and lon")
@@ -76,7 +79,7 @@ def gen_bathymetry(dataset, resolution, filename, mask):
     values = dataset.variables['h']
 
     # interpolate
-    grid_values = griddata(points, values, (lon_reg, lat_reg), method='linear') 
+    grid_values = griddata(points, values, (lon_reg, lat_reg), method=interp) 
         
     # mask
     bool_mask = np.isnan(mask)
@@ -103,12 +106,14 @@ def gen_bathymetry(dataset, resolution, filename, mask):
 #
 ######################################################
 
-def gen_4dvar(dataset, resolution, filename, varname, mask):
+def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, interp):
 
     # Extract data
     print("[gen_4dvar] === Reading lat and lon")
     lon = dataset.variables['lon'][:]
     lat = dataset.variables['lat'][:]
+    lonc = dataset.variables['lonc'][:]
+    latc = dataset.variables['latc'][:]
     
     # Define the regular grid
     print("[gen_4dvar] === Creating the regular grid")
@@ -130,22 +135,19 @@ def gen_4dvar(dataset, resolution, filename, varname, mask):
         
         # full_data = []
         full_data = np.full((1, len(dataset.dimensions['siglay']), grid_values.shape[0], grid_values.shape[1]), np.nan)
-
-        # debug print
-        print("[gen_4dvar] === Processing time %s" % t)
         
         # iterate over depth
         for d in range(len(dataset.dimensions['siglay'])):
-
-            # debug print
-            print("[gen_4dvar] === Processing siglay %s" % d)
             
             # map input data on the grid
-            points = np.column_stack((lon.flatten(), lat.flatten()))
+            if nele:
+                points = np.column_stack((lonc.flatten(), latc.flatten()))
+            else:
+                points = np.column_stack((lon.flatten(), lat.flatten()))
             values = dataset.variables[varname][t, d, :]
             
             # interpolate
-            grid_values = griddata(points, values, (lon_reg, lat_reg), method='linear')
+            grid_values = griddata(points, values, (lon_reg, lat_reg), method=interp)
 
             # mask
             grid_values[bool_mask] = np.nan
@@ -154,8 +156,7 @@ def gen_4dvar(dataset, resolution, filename, varname, mask):
             full_data[0,d,:,:] = grid_values
 
         # determine output filename
-        output_path, output_basename = os.path.split(output_filename)
-        filename = os.path.join(output_path, f"{t:02d}_{varname}.nc")
+        filename = os.path.join(output_dir, f"{prefix}_{t:02d}_{varname}.nc")
 
         # output to NetCDF
         print("[gen_4dvar] === Generating NetCDF file %s" % filename)        
@@ -176,18 +177,19 @@ def gen_4dvar(dataset, resolution, filename, varname, mask):
         merge_list.append(filename)
         print("[gen_4dvar] === File %s ready!" % filename)
 
-    # return
-    return merge_list
 
+    # merge files and remove single ones
+    filename = os.path.join(output_dir, f"{prefix}_{varname}_{t}.nc")    
+    merge_files(merge_list, filename)
 
-
+            
 ######################################################
 #
 # Function gen_3dvar
 #
 ######################################################
 
-def gen_3dvar(dataset, resolution, filename, varname, mask):
+def gen_3dvar(dataset, resolution, output_dir, prefix, varname, mask, interp):
 
     # Extract data
     print("[gen_3dvar] === Reading lat and lon")
@@ -215,15 +217,12 @@ def gen_3dvar(dataset, resolution, filename, varname, mask):
     # iterate over time
     for t in range(len(dataset.variables['time'])):
 
-        # debug print
-        print("[gen_3dvar] === Processing time %s" % t)
-
         # map input data on the grid
         points = np.column_stack((lon.flatten(), lat.flatten()))
         values = dataset.variables[varname][t, :]
             
         # interpolate
-        grid_values = griddata(points, values, (lon_reg, lat_reg), method='linear')
+        grid_values = griddata(points, values, (lon_reg, lat_reg), method=interp)
         
         # mask
         grid_values[bool_mask] = np.nan
@@ -231,9 +230,8 @@ def gen_3dvar(dataset, resolution, filename, varname, mask):
         # add this layer data to the full array
         full_data[t,:,:] = grid_values
 
-        # determine output filename
-        output_path, output_basename = os.path.split(output_filename)
-        filename = os.path.join(output_path, f"{t:02d}_{varname}.nc")
+    # determine output filename
+    filename = os.path.join(output_dir, f"{prefix}_{varname}.nc")
 
     # output to NetCDF
     print("[gen_3dvar] === Generating NetCDF file %s" % filename)        
@@ -250,12 +248,7 @@ def gen_3dvar(dataset, resolution, filename, varname, mask):
     
     # Save the dataset
     ds.to_netcdf(filename)
-    merge_list.append(filename)
     print("[gen_3dvar] === File %s ready!" % filename)
-    
-    # return
-    return merge_list
-
 
 
 ######################################################
@@ -266,11 +259,7 @@ def gen_3dvar(dataset, resolution, filename, varname, mask):
 
 def gen_landsea_mask(dataset, resolution, filename):
 
-    ######################################################
-    #
-    # Define the regular grid and build land-sea mask
-    #
-    ######################################################
+    # ===== Define the regular grid and build land-sea mask =====
 
     # Extract data
     print("[gen_landsea_mask] === Reading lat and lon")
@@ -289,12 +278,7 @@ def gen_landsea_mask(dataset, resolution, filename):
     # Flatten the regular grid coordinates for querying
     points_regular_flat = np.column_stack((lon_reg.ravel(), lat_reg.ravel()))
 
-    
-    ######################################################
-    #
-    # Fill triangles in land sea mask
-    #
-    ######################################################    
+    # ===== Fill triangles in land sea mask =====
 
     # Iterate over triangles
     print("[gen_landsea_mask] === Iterating over nv items...")
@@ -325,12 +309,7 @@ def gen_landsea_mask(dataset, resolution, filename):
     inner_points = gpd.sjoin(gdf_points, gdf_triangles, how="inner", predicate='within')
     gdf_points.loc[inner_points.index, 'value'] = 1
    
-    
-    ######################################################
-    #
-    # Output to NetCDF File
-    #
-    ######################################################
+    # ===== Output to NetCDF File =====
 
     # Prepare data to be stored on NetCDF file
     print("[gen_landsea_mask] === Preparing data for output to NetCDF file...")    
@@ -368,7 +347,7 @@ def gen_landsea_mask(dataset, resolution, filename):
                 'lat': ('lat', latitudes),                
             }
     )
-    ds.to_netcdf(mask_filename)
+    ds.to_netcdf(filename)
     print("[gen_landsea_mask] === Land sea mask file ready!")
 
     # return the mask
@@ -383,25 +362,29 @@ def gen_landsea_mask(dataset, resolution, filename):
 
 if __name__ == "__main__":
 
-    ######################################################
-    #
-    # Input params management
-    #
-    ######################################################
+    # ===== Input params management =====
     
     # read input params
-    options, remainder = getopt.getopt(sys.argv[1:], 'i:o:r:v:', ['input=', 'output=', 'resolution=', 'variables='])
+    options, remainder = getopt.getopt(sys.argv[1:], 'i:o:r:v:p:m:', ['input=', 'output=', 'resolution=', 'variables=', 'prefix=', 'interp='])
 
     # parse input params
     for opt, arg in options:
         
         if opt in ('-o', '--output'):
-            output_filename = arg
-            print("[main] === Output file set to: %s" % output_filename)
+            output_directory = arg
+            print("[main] === Output file set to: %s" % output_directory)
 
         elif opt in ('-i', '--input'):
             input_filename = arg
             print("[main] === Input file set to: %s" % input_filename)
+
+        elif opt in ('-p', '--prefix'):
+            prefix = arg
+            print("[main] === Prefix for output file set to: %s" % prefix)
+
+        elif opt in ('-m', '--interp'):
+            interp = arg
+            print("[main] === Interpolation method set to: %s" % interp)
 
         elif opt in ('-r', '--resolution'):
             resolution_meters = arg
@@ -415,12 +398,7 @@ if __name__ == "__main__":
         else:
             print("[main] === Unrecognized option %s. Will be ignored." % opt)
 
-
-    ######################################################
-    #
-    # Input file opening and initialization
-    #
-    ######################################################
+    # ===== Input file opening and initialization =====
 
     # open dataset
     print("[main] === Opening dataset...")
@@ -428,88 +406,51 @@ if __name__ == "__main__":
 
     # init list of files
     files_to_merge = []    
-    
-    ######################################################
-    #
-    # Generation of land sea mask
-    #
-    ######################################################
+
+    # ===== Generation of land sea mask =====
 
     # generate the land sea mask
     print("[main] === Invoking gen_landsea_mask()")
-    output_path, output_basename = os.path.split(output_filename)
-    mask_filename = "%s/mask_%s" % (output_path, output_basename)
+    mask_filename = "%s/%s_landSeaMask.nc" % (output_directory, prefix)
     mask = gen_landsea_mask(input_dataset, resolution_degrees, mask_filename)
-    files_to_merge.append(mask_filename)
 
-    ######################################################
-    #
-    # Generation of bathymetry
-    #
-    ######################################################
+    # ===== Generation of bathymetry =====
 
     # generate the land sea mask
     print("[main] === Invoking gen_bathymetry()")
-    output_path, output_basename = os.path.split(output_filename)
-    bathy_filename = "%s/bathy_%s" % (output_path, output_basename)    
-    gen_bathymetry(input_dataset, resolution_degrees, bathy_filename, mask)
-    files_to_merge.append(bathy_filename)
-
-    ######################################################
-    #
-    # Generation of 3d vars
-    #
-    ######################################################
+    bathy_filename = os.path.join(output_directory, "%s_bathymetry.nc" % (prefix))
+    gen_bathymetry(input_dataset, resolution_degrees, bathy_filename, mask, interp)
+    
+    # ===== Generation of 3d vars =====
     
     for v in variables:
 
         # check if this variable depends on time and node
         if len(input_dataset.variables[v].shape) == 2:
-
-            # debug print
-            print("[main] === Processing %s as a 3D var" % v)
             
             # if yes, treat it like a 3d var (node -> lat, lon)
-            tmp_merge_list = gen_3dvar(input_dataset, resolution_degrees, output_filename, v, mask)
-            for f in tmp_merge_list:
-                files_to_merge.append(f)
-
-    
-    # ######################################################
-    # #
-    # # Generation of 4d vars
-    # #
-    # ######################################################
-    
-    # for v in variables:
-
-    #     # check if this variable depends on time, node and depth
-    #     if len(input_dataset.variables[v].shape) == 3:
-
-    #         # debug print
-    #         print("[main] === Processing %s as a 4D var" % v)
+            print("[main] === Processing %s as a 3D var" % v)
+            gen_3dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, interp)
             
-    #         # if yes, treat it like a 4d var (node -> lat, lon)
-    #         tmp_merge_list = gen_4dvar(input_dataset, resolution_degrees, output_filename, v, mask)
-    #         for f in tmp_merge_list:
-    #             files_to_merge.append(f)
+    # ===== Generation of 4d vars =====
+    
+    for v in variables:
 
+        # check the number of dimensions
+        if len(input_dataset.variables[v].shape) == 3:
 
-    # ######################################################
-    # #
-    # # Merge files
-    # #
-    # ######################################################
+            # check if this variable depends on time, node and depth
+            if "nele" not in input_dataset.variables[v].dimensions:
+                        
+                # if yes, treat it like a 4d var (node -> lat, lon)
+                print("[main] === Processing %s as a 4D time/depth/lat/lon var" % v)                
+                gen_4dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, False, interp)
 
-    # print("[main] === Will merge:")
-    # merge_files(files_to_merge, output_filename)
-        
+            else:
             
-    ######################################################
-    #
-    # End of business
-    #
-    ######################################################
-
+                # if yes, treat it like a 4d var (node -> lat, lon)
+                print("[main] === Processing %s as a 4D time/depth/lat/lon nele-based var" % v)                
+                gen_4dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, True, interp)
+                                
     # End of business
     print("[main] === EOB. Bye...")    
