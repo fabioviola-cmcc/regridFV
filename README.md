@@ -5,6 +5,14 @@ according to specified parameters. It allows users to set input and
 output details, choose variables of interest, specify the resolution
 for output, and select an interpolation method.
 
+## Requirements
+
+To install all the required dependencies:
+
+```
+$ conda env create -f environment_simple.yaml
+```
+
 ## Usage
 
 The script is executed from the command line with several options to specify the input parameters:
