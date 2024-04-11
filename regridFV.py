@@ -35,21 +35,23 @@ def merge_files(merge_list, filename):
     multiple NetCDF files into a single dataset
     """
 
-    # open the datasets
-    datasets = []
-    for m in merge_list:
-        datasets.append(xr.open_dataset(m))
+    # # open the datasets
+    # datasets = []
+    # for m in merge_list:
+    #     datasets.append(xr.open_dataset(m))
 
-    # merge the datasets
-    ds_merged = xr.merge(datasets, compat='override')
+    # # merge the datasets
+    # ds_merged = xr.merge(datasets, compat='override')
     
-    # save the new dataset into a single file
-    print("[merge_files] === Merged input files to %s" % filename)    
-    ds_merged.to_netcdf(filename)
+    # # save the new dataset into a single file
+    # print("[merge_files] === Merged input files to %s" % filename)    
+    # ds_merged.to_netcdf(filename)
 
-    # remove input files
-    for f in merge_list:
-        os.remove(f)
+    # # remove input files
+    # for f in merge_list:
+    #     os.remove(f)
+
+    print("Merge still to be implemented!")
     
     
 ######################################################
@@ -167,7 +169,7 @@ def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, inte
             coords={
                 'lon': ('lon', new_lons),
                 'lat': ('lat', new_lats),
-                'time': ('time', [dataset.variables['time'][0]]),
+                'time': ('time', [dataset.variables['time'][t]]),
                 'depth': ('depth', range(len(dataset.dimensions['siglay'])))
             }
         )
