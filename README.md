@@ -24,6 +24,13 @@ The script is executed from the command line with several options to specify the
 - `-p`, `--prefix`: Prefix for the output filenames
 - `-m`, `--interp`: Interpolation method to be used (e.g., `linear`, `nearest`)
 
+Example call:
+
+```
+$ python regridFV.py --input=in/proc_sms_0025.nc -m linear --output=out --resolution=100 --prefix=test --variables=salinity:zeta
+```
+
+
 ## Todo List
 
 - Parallelization of `gen_4dvar`, `gen_3dvar` function calls
