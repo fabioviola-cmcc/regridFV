@@ -23,11 +23,12 @@ The script is executed from the command line with several options to specify the
 - `-v`, `--variables`: Specify the variables of interest separated by colons (e.g., `salinity:u:v`)
 - `-p`, `--prefix`: Prefix for the output filenames
 - `-m`, `--interp`: Interpolation method to be used (e.g., `linear`, `nearest`)
+- `-b`, `--bbox`: Bounding box defined as minLat:minLon:maxLat:maxLon
 
 Example call:
 
 ```
-$ python regridFV.py --input=in/proc_sms_0025.nc -m linear --output=out --resolution=100 --prefix=test --variables=salinity:zeta
+$ python regridFV.py --input=in/proc_sms_0025.nc -m linear --output=out --resolution=100 --prefix=test --variables=salinity:zeta --bbox=43.266:4.32:43.7138:4.93
 ```
 
 

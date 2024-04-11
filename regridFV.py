@@ -7,8 +7,10 @@
 ######################################################
 
 import os
+import pdb
 import sys
 import getopt
+import traceback
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -60,7 +62,7 @@ def merge_files(merge_list, filename):
 #
 ######################################################
 
-def gen_bathymetry(dataset, resolution, filename, mask, interp):
+def gen_bathymetry(dataset, resolution, filename, mask, interp, bbox):
 
     # extract lat and lon data
     print("[gen_bathymetry] === Reading lat and lon")
@@ -69,10 +71,16 @@ def gen_bathymetry(dataset, resolution, filename, mask, interp):
     
     # define the regular grid
     print("[gen_bathymetry] === Creating the regular grid")
-    lon_min, lon_max, lat_min, lat_max = np.min(lon), np.max(lon), np.min(lat), np.max(lat)
+    lat_min, lat_max, lon_min, lon_max = float(bbox[0]), float(bbox[2]), float(bbox[1]), float(bbox[3]) #np.min(lon), np.max(lon), np.min(lat), np.max(lat)
     lon_step, lat_step = resolution, resolution
-    new_lons = np.arange(lon_min, lon_max, lon_step)
-    new_lats = np.arange(lat_min, lat_max, lat_step)
+
+    try:
+        new_lons = np.arange(lon_min, lon_max, lon_step)
+        new_lats = np.arange(lat_min, lat_max, lat_step)
+    except:
+        print(traceback.print_exc())
+        pdb.set_trace()
+        
     lon_reg, lat_reg = np.meshgrid(new_lons, new_lats)
     grid_values = np.full(lon_reg.shape, np.nan)
 
@@ -101,6 +109,48 @@ def gen_bathymetry(dataset, resolution, filename, mask, interp):
     ds.to_netcdf(filename)    
     print("[gen_bathymetry] === Bathymetry file ready!")
 
+
+# def gen_bathymetry(dataset, resolution, filename, mask, interp):
+
+#     # extract lat and lon data
+#     print("[gen_bathymetry] === Reading lat and lon")
+#     lon = dataset.variables['lon'][:]
+#     lat = dataset.variables['lat'][:]
+    
+#     # define the regular grid
+#     print("[gen_bathymetry] === Creating the regular grid")
+#     lon_min, lon_max, lat_min, lat_max = np.min(lon), np.max(lon), np.min(lat), np.max(lat)
+#     lon_step, lat_step = resolution, resolution
+#     new_lons = np.arange(lon_min, lon_max, lon_step)
+#     new_lats = np.arange(lat_min, lat_max, lat_step)
+#     lon_reg, lat_reg = np.meshgrid(new_lons, new_lats)
+#     grid_values = np.full(lon_reg.shape, np.nan)
+
+#     # map input data on the grid
+#     points = np.column_stack((lon.flatten(), lat.flatten()))
+#     values = dataset.variables['h']
+
+#     # interpolate
+#     grid_values = griddata(points, values, (lon_reg, lat_reg), method=interp) 
+        
+#     # mask
+#     bool_mask = np.isnan(mask)
+#     grid_values[bool_mask] = np.nan
+    
+#     # generate output file
+#     print("[gen_bathymetry] === Generating NetCDF file...")    
+#     ds = xr.Dataset(
+#         {
+#             'bathymetry': (('lat', 'lon'), grid_values)
+#         },
+#             coords={
+#                 'lon': ('lon', new_lons),
+#                 'lat': ('lat', new_lats),                
+#             }
+#     )
+#     ds.to_netcdf(filename)    
+#     print("[gen_bathymetry] === Bathymetry file ready!")
+    
     
 ######################################################
 #
@@ -108,7 +158,7 @@ def gen_bathymetry(dataset, resolution, filename, mask, interp):
 #
 ######################################################
 
-def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, interp):
+def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, interp, bbox):
 
     # Extract data
     print("[gen_4dvar] === Reading lat and lon")
@@ -119,7 +169,7 @@ def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, inte
     
     # Define the regular grid
     print("[gen_4dvar] === Creating the regular grid")
-    lon_min, lon_max, lat_min, lat_max = np.min(lon), np.max(lon), np.min(lat), np.max(lat)
+    lat_min, lat_max, lon_min, lon_max = float(bbox[0]), float(bbox[2]), float(bbox[1]), float(bbox[3])
     lon_step, lat_step = resolution, resolution
     new_lons = np.arange(lon_min, lon_max, lon_step)
     new_lats = np.arange(lat_min, lat_max, lat_step)
@@ -195,7 +245,7 @@ def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, inte
 #
 ######################################################
 
-def gen_3dvar(dataset, resolution, output_dir, prefix, varname, mask, interp):
+def gen_3dvar(dataset, resolution, output_dir, prefix, varname, mask, interp, bbox):
 
     # Extract data
     print("[gen_3dvar] === Reading lat and lon")
@@ -204,7 +254,7 @@ def gen_3dvar(dataset, resolution, output_dir, prefix, varname, mask, interp):
     
     # Define the regular grid
     print("[gen_3dvar] === Creating the regular grid")
-    lon_min, lon_max, lat_min, lat_max = np.min(lon), np.max(lon), np.min(lat), np.max(lat)
+    lat_min, lat_max, lon_min, lon_max = float(bbox[0]), float(bbox[2]), float(bbox[1]), float(bbox[3])
     lon_step, lat_step = resolution, resolution
     new_lons = np.arange(lon_min, lon_max, lon_step)
     new_lats = np.arange(lat_min, lat_max, lat_step)
@@ -267,7 +317,7 @@ def gen_3dvar(dataset, resolution, output_dir, prefix, varname, mask, interp):
 #
 ######################################################
 
-def gen_landsea_mask(dataset, resolution, filename):
+def gen_landsea_mask(dataset, resolution, filename, bbox):
 
     # ===== Define the regular grid and build land-sea mask =====
 
@@ -278,7 +328,7 @@ def gen_landsea_mask(dataset, resolution, filename):
     
     # Define the regular grid
     print("[gen_landsea_mask] === Creating the regular grid")
-    lon_min, lon_max, lat_min, lat_max = np.min(lon), np.max(lon), np.min(lat), np.max(lat)
+    lat_min, lat_max, lon_min, lon_max = float(bbox[0]), float(bbox[2]), float(bbox[1]), float(bbox[3]) #np.min(lon), np.max(lon), np.min(lat), np.max(lat)
     lon_step, lat_step = resolution, resolution
     new_lons = np.arange(lon_min, lon_max, lon_step)
     new_lats = np.arange(lat_min, lat_max, lat_step)
@@ -329,7 +379,7 @@ def gen_landsea_mask(dataset, resolution, filename):
         'value': gdf_points['value']
     }
     gdf = gpd.GeoDataFrame(data, columns=['lat', 'lon', 'value'])
-    
+
     # convert the pivot dataframe to a pd dataframe
     df = pd.DataFrame(gdf)
 
@@ -338,7 +388,7 @@ def gen_landsea_mask(dataset, resolution, filename):
 
     # convert the pivot table to a numpy array
     land_sea_mask = pivot_table.to_numpy()
-
+    
     # save original coordinates
     latitudes = pivot_table.index.to_numpy()
     longitudes = pivot_table.columns.to_numpy()
@@ -375,7 +425,7 @@ if __name__ == "__main__":
     # ===== Input params management =====
     
     # read input params
-    options, remainder = getopt.getopt(sys.argv[1:], 'i:o:r:v:p:m:', ['input=', 'output=', 'resolution=', 'variables=', 'prefix=', 'interp='])
+    options, remainder = getopt.getopt(sys.argv[1:], 'i:o:r:v:p:m:b:', ['input=', 'output=', 'resolution=', 'variables=', 'prefix=', 'interp=', 'bbox='])
 
     # parse input params
     for opt, arg in options:
@@ -395,6 +445,14 @@ if __name__ == "__main__":
         elif opt in ('-m', '--interp'):
             interp = arg
             print("[main] === Interpolation method set to: %s" % interp)
+
+        elif opt in ('-b', '--bbox'):
+            bbox = arg.split(":")
+            print("[main] === Bounding box set to:")
+            print("[main] === - Min lat: %s" % bbox[0])
+            print("[main] === - Min lon: %s" % bbox[1])            
+            print("[main] === - Max lat: %s" % bbox[2])
+            print("[main] === - Max lon: %s" % bbox[3])            
 
         elif opt in ('-r', '--resolution'):
             resolution_meters = arg
@@ -422,15 +480,15 @@ if __name__ == "__main__":
     # generate the land sea mask
     print("[main] === Invoking gen_landsea_mask()")
     mask_filename = "%s/%s_landSeaMask.nc" % (output_directory, prefix)
-    mask = gen_landsea_mask(input_dataset, resolution_degrees, mask_filename)
+    mask = gen_landsea_mask(input_dataset, resolution_degrees, mask_filename, bbox)
 
     # ===== Generation of bathymetry =====
 
     # generate the land sea mask
     print("[main] === Invoking gen_bathymetry()")
     bathy_filename = os.path.join(output_directory, "%s_bathymetry.nc" % (prefix))
-    gen_bathymetry(input_dataset, resolution_degrees, bathy_filename, mask, interp)
-    
+    gen_bathymetry(input_dataset, resolution_degrees, bathy_filename, mask, interp, bbox)
+
     # ===== Generation of 3d vars =====
     
     for v in variables:
@@ -440,7 +498,7 @@ if __name__ == "__main__":
             
             # if yes, treat it like a 3d var (node -> lat, lon)
             print("[main] === Processing %s as a 3D var" % v)
-            gen_3dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, interp)
+            gen_3dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, interp, bbox)
             
     # ===== Generation of 4d vars =====
     
@@ -454,13 +512,13 @@ if __name__ == "__main__":
                         
                 # if yes, treat it like a 4d var (node -> lat, lon)
                 print("[main] === Processing %s as a 4D time/depth/lat/lon var" % v)                
-                gen_4dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, False, interp)
+                gen_4dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, False, interp, bbox)
 
             else:
             
                 # if yes, treat it like a 4d var (node -> lat, lon)
                 print("[main] === Processing %s as a 4D time/depth/lat/lon nele-based var" % v)                
-                gen_4dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, True, interp)
+                gen_4dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, True, interp, bbox)
                                 
     # End of business
     print("[main] === EOB. Bye...")    
