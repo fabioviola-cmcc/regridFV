@@ -9,6 +9,7 @@
 import os
 import pdb
 import sys
+import dask
 import getopt
 import traceback
 import numpy as np
@@ -22,8 +23,95 @@ from scipy.interpolate import griddata
 from scipy.interpolate import interp1d
 from shapely.geometry import Polygon, Point
 from scipy.interpolate import LinearNDInterpolator
+from concurrent.futures import ProcessPoolExecutor
 
 
+# Set up Dask to manage memory usage more effectively
+dask.config.set({'array.slicing.split_large_chunks': True})
+
+
+######################################################
+#
+# Function open_datasets
+#
+######################################################
+
+def open_datasets(file_list):
+
+    """
+    Handler to deal with very large data
+    """
+    
+    # Use dask's automatic chunking to deal with large data
+    return [xr.open_dataset(f, chunks={'time': 1}) for f in file_list]
+
+
+######################################################
+#
+# Function merge_datasets
+#
+######################################################
+
+def merge_datasets(datasets):
+
+    """
+    Utility to merge datasets exploting dask
+    """
+    
+    # Use Dask's lazy loading
+    return xr.merge(datasets, compat='override')
+
+
+######################################################
+#
+# Function process_timestep4d
+#
+######################################################
+
+def process_timestep4d(t, data, depth_levels, varname, grid_values, lon_reg, lat_reg, bool_mask, interp, output_dir, prefix, nele, coords):
+
+    """
+    Function to process a timestep over all the siglay for a
+    4d variable. This function is run as a pool of concurrent processes
+    """
+
+    # initialize the output data structure
+    full_data = np.full((1, depth_levels, grid_values.shape[0], grid_values.shape[1]), np.nan)
+
+    # iterate over the depth layers
+    for d in range(depth_levels):
+        if nele:
+            points = np.column_stack((coords['lonc'].flatten(), coords['latc'].flatten()))
+        else:
+            points = np.column_stack((coords['lon'].flatten(), coords['lat'].flatten()))
+        values = data[d, :]
+
+        # interpolate
+        grid_values = griddata(points, values, (lon_reg, lat_reg), method=interp)
+        grid_values[bool_mask] = np.nan        
+        full_data[0,d,:,:] = grid_values
+
+    # Build the output file
+    filename = os.path.join(output_dir, f"{prefix}_{t:02d}_{varname}.nc")   
+    ds = xr.Dataset(
+        {
+            varname: (('time', 'depth', 'lat', 'lon'), full_data)
+        },
+        coords={
+            'lon': ('lon', coords['new_lons']),
+            'lat': ('lat', coords['new_lats']),
+            'time': ('time', [t]),
+            'depth': ('depth', range(depth_levels))
+        }
+    )
+    encoding = {varname: {"dtype": "float32"}}
+    ds.to_netcdf(filename, encoding=encoding)
+    print(f"[gen_4dvar] === File {filename} ready!")
+
+    # return the filename, to be later used for merging
+    return filename
+
+    
 ######################################################
 #
 # Function merge_files
@@ -37,17 +125,13 @@ def merge_files(merge_list, filename):
     multiple NetCDF files into a single dataset
     """
 
-    # open the datasets
-    datasets = []
-    for m in merge_list:
-        datasets.append(xr.open_dataset(m))
-
-    # merge the datasets
-    ds_merged = xr.merge(datasets, compat='override')
+    # open and merge datasets    
+    datasets = open_datasets(merge_list)
+    ds_merged = merge_datasets(datasets)
     
     # save the new dataset into a single file
     print("[merge_files] === Merged input files to %s" % filename)    
-    ds_merged.to_netcdf(filename)
+    ds_merged.to_netcdf(filename, engine='h5netcdf', mode='w', format='NETCDF4')
 
     # remove input files
     for f in merge_list:
@@ -62,6 +146,10 @@ def merge_files(merge_list, filename):
 
 def gen_bathymetry(dataset, resolution, filename, mask, interp, bbox):
 
+    """
+    Function to generate the bathymetry
+    """
+    
     # extract lat and lon data
     print("[gen_bathymetry] === Reading lat and lon")
     lon = dataset.variables['lon'][:]
@@ -116,6 +204,10 @@ def gen_bathymetry(dataset, resolution, filename, mask, interp, bbox):
 
 def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, interp, bbox):
 
+    """
+    Function to regularize a 4d variable
+    """
+    
     # Extract data
     print("[gen_4dvar] === Reading lat and lon")
     lon = dataset.variables['lon'][:]
@@ -132,66 +224,23 @@ def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, inte
     lon_reg, lat_reg = np.meshgrid(new_lons, new_lats)
     grid_values = np.full(lon_reg.shape, np.nan)
 
+    # define an exchange data structure
+    coords = {'lon': lon, 'lat': lat, 'lonc': lonc, 'latc': latc, 'new_lons': new_lons, 'new_lats': new_lats }
+    
     # initialize an empty merge list
     merge_list = []
         
     # build the mask
-    bool_mask = np.isnan(mask)                
-    
-    # iterate over time
-    for t in range(len(dataset.variables['time'])):
-        
-        # full_data = []
-        full_data = np.full((1, len(dataset.dimensions['siglay']), grid_values.shape[0], grid_values.shape[1]), np.nan)
-        
-        # iterate over depth
-        for d in range(len(dataset.dimensions['siglay'])):
-            
-            # map input data on the grid
-            if nele:
-                points = np.column_stack((lonc.flatten(), latc.flatten()))
-            else:
-                points = np.column_stack((lon.flatten(), lat.flatten()))
-            values = dataset.variables[varname][t, d, :]
-            
-            # interpolate
-            grid_values = griddata(points, values, (lon_reg, lat_reg), method=interp)
+    bool_mask = np.isnan(mask)
 
-            # mask
-            grid_values[bool_mask] = np.nan
-            
-            # add this layer data to the full array
-            full_data[0,d,:,:] = grid_values
-
-        # determine output filename
-        filename = os.path.join(output_dir, f"{prefix}_{t:02d}_{varname}.nc")
-
-        # output to NetCDF
-        print("[gen_4dvar] === Generating NetCDF file %s" % filename)        
-        ds = xr.Dataset(
-            {
-                varname: (('time', 'depth', 'lat', 'lon'), full_data)
-            },
-            coords={
-                'lon': ('lon', new_lons),
-                'lat': ('lat', new_lats),
-                'time': ('time', [dataset.variables['time'][t]]),
-                'depth': ('depth', range(len(dataset.dimensions['siglay'])))
-            }
-        )
-
-        encoding = {
-            varname: { "dtype" : "float32" }
-        } 
-        
-        # Save the dataset
-        ds.to_netcdf(filename, encoding=encoding)
-        merge_list.append(filename)
-        print("[gen_4dvar] === File %s ready!" % filename)
-
+    # start a pool of processes to simultaneously produce files
+    with ProcessPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(process_timestep4d, t, dataset.variables[varname][t, :, :], len(dataset.dimensions['siglay']), varname, grid_values, lon_reg, lat_reg, bool_mask, interp, output_dir, prefix, nele, coords)
+                   for t in range(len(dataset.variables['time']))]
+        merge_list = [f.result() for f in futures]
 
     # merge files and remove single ones
-    filename = os.path.join(output_dir, f"{prefix}_{varname}_{t}.nc")    
+    filename = os.path.join(output_dir, f"{prefix}_{varname}.nc")    
     merge_files(merge_list, filename)
 
             
@@ -203,6 +252,10 @@ def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, inte
 
 def gen_3dvar(dataset, resolution, output_dir, prefix, varname, mask, interp, bbox):
 
+    """
+    Function to regularize a 3D variable
+    """
+    
     # Extract data
     print("[gen_3dvar] === Reading lat and lon")
     lon = dataset.variables['lon'][:]
@@ -275,6 +328,10 @@ def gen_3dvar(dataset, resolution, output_dir, prefix, varname, mask, interp, bb
 
 def gen_landsea_mask(dataset, resolution, filename, bbox):
 
+    """
+    Function to generate the landsea mask
+    """
+    
     # ===== Define the regular grid and build land-sea mask =====
 
     # Extract data
