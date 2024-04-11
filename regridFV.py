@@ -37,23 +37,21 @@ def merge_files(merge_list, filename):
     multiple NetCDF files into a single dataset
     """
 
-    # # open the datasets
-    # datasets = []
-    # for m in merge_list:
-    #     datasets.append(xr.open_dataset(m))
+    # open the datasets
+    datasets = []
+    for m in merge_list:
+        datasets.append(xr.open_dataset(m))
 
-    # # merge the datasets
-    # ds_merged = xr.merge(datasets, compat='override')
+    # merge the datasets
+    ds_merged = xr.merge(datasets, compat='override')
     
-    # # save the new dataset into a single file
-    # print("[merge_files] === Merged input files to %s" % filename)    
-    # ds_merged.to_netcdf(filename)
+    # save the new dataset into a single file
+    print("[merge_files] === Merged input files to %s" % filename)    
+    ds_merged.to_netcdf(filename)
 
-    # # remove input files
-    # for f in merge_list:
-    #     os.remove(f)
-
-    print("Merge still to be implemented!")
+    # remove input files
+    for f in merge_list:
+        os.remove(f)
     
     
 ######################################################
@@ -108,48 +106,6 @@ def gen_bathymetry(dataset, resolution, filename, mask, interp, bbox):
     )
     ds.to_netcdf(filename)    
     print("[gen_bathymetry] === Bathymetry file ready!")
-
-
-# def gen_bathymetry(dataset, resolution, filename, mask, interp):
-
-#     # extract lat and lon data
-#     print("[gen_bathymetry] === Reading lat and lon")
-#     lon = dataset.variables['lon'][:]
-#     lat = dataset.variables['lat'][:]
-    
-#     # define the regular grid
-#     print("[gen_bathymetry] === Creating the regular grid")
-#     lon_min, lon_max, lat_min, lat_max = np.min(lon), np.max(lon), np.min(lat), np.max(lat)
-#     lon_step, lat_step = resolution, resolution
-#     new_lons = np.arange(lon_min, lon_max, lon_step)
-#     new_lats = np.arange(lat_min, lat_max, lat_step)
-#     lon_reg, lat_reg = np.meshgrid(new_lons, new_lats)
-#     grid_values = np.full(lon_reg.shape, np.nan)
-
-#     # map input data on the grid
-#     points = np.column_stack((lon.flatten(), lat.flatten()))
-#     values = dataset.variables['h']
-
-#     # interpolate
-#     grid_values = griddata(points, values, (lon_reg, lat_reg), method=interp) 
-        
-#     # mask
-#     bool_mask = np.isnan(mask)
-#     grid_values[bool_mask] = np.nan
-    
-#     # generate output file
-#     print("[gen_bathymetry] === Generating NetCDF file...")    
-#     ds = xr.Dataset(
-#         {
-#             'bathymetry': (('lat', 'lon'), grid_values)
-#         },
-#             coords={
-#                 'lon': ('lon', new_lons),
-#                 'lat': ('lat', new_lats),                
-#             }
-#     )
-#     ds.to_netcdf(filename)    
-#     print("[gen_bathymetry] === Bathymetry file ready!")
     
     
 ######################################################
