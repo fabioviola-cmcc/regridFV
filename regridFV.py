@@ -173,9 +173,13 @@ def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, inte
                 'depth': ('depth', range(len(dataset.dimensions['siglay'])))
             }
         )
-    
+
+        encoding = {
+            varname: { "dtype" : "float32" }
+        } 
+        
         # Save the dataset
-        ds.to_netcdf(filename)
+        ds.to_netcdf(filename, encoding=encoding)
         merge_list.append(filename)
         print("[gen_4dvar] === File %s ready!" % filename)
 
@@ -247,9 +251,13 @@ def gen_3dvar(dataset, resolution, output_dir, prefix, varname, mask, interp):
             'time': ('time', dataset.variables['time'])
         }
     )
-    
+
+    encoding = {
+        varname: { "dtype" : "float32" }
+    } 
+           
     # Save the dataset
-    ds.to_netcdf(filename)
+    ds.to_netcdf(filename, encoding=encoding)
     print("[gen_3dvar] === File %s ready!" % filename)
 
 
