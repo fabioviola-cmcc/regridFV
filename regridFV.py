@@ -32,6 +32,34 @@ dask.config.set({'array.slicing.split_large_chunks': True})
 
 ######################################################
 #
+# Function print_help
+#
+######################################################
+
+def print_help():
+
+    """
+    Utility to print the usage guide
+    """
+
+    print()
+    print("==== regridFV.py usage: ====")
+    print()
+    print("\tMandatory parameters:")
+    print("\t--input=<INPUT_FILE> or -i <INPUT_FILE>")
+    print("\t--output=<OUTPUT_DIR> or -o <OUTPUT_DIR>")
+    print("\t--resolution=<RESOLUTION> or -r <RESOLUTION>")
+    print("\t--variables=<VAR1:VAR2:...:VARn> or -v <VAR1:VAR2:...:VARn>")
+    print("\t--bbox=<MIN_LAT:MIN_LON:MAX_LAT:MAX_LON> or -b <MIN_LAT:MIN_LON:MAX_LAT:MAX_LON>")
+    print()
+    print("\tOptional parameters:")
+    print("\t--prefix=<PREFIX> or -p <PREFIX>")    
+    print("\t--interp=<linear|cubic|nearest> or -m <linear|cubic|nearest> --- If missing, linear is used")    
+    print("\t--steps=<mergetime:avg:landsea:bathy> or -s <mergetime:avg:landsea:bathy> --- If missing, merge over time and avg will not be performed, bathymetry and land/sea mask will not be saved")
+    print()
+    
+######################################################
+#
 # Function open_datasets
 #
 ######################################################
@@ -118,29 +146,38 @@ def process_timestep4d(t, data, depth_levels, varname, grid_values, lon_reg, lat
 #
 ######################################################
 
-def merge_files(merge_list, filename, avg_filename):
+def merge_files(merge_list, filename, avg_filename, steps):
 
     """
     As the name suggests, this function is used to merge
     multiple NetCDF files into a single dataset
     """
 
-    # open and merge datasets    
-    datasets = open_datasets(merge_list)
-    ds_merged = merge_datasets(datasets)
+    if ("mergetime" in steps) or ("avg" in steps):
+        
+        # open and merge datasets    
+        datasets = open_datasets(merge_list)
+        ds_merged = merge_datasets(datasets)
+
+        # save the merged file
+        if "mergetime" in steps:
     
-    # save the new dataset into a single file
-    print("[merge_files] === Merged input files to %s" % filename)    
-    ds_merged.to_netcdf(filename, engine='h5netcdf', mode='w', format='NETCDF4')
+            # save the new dataset into a single file
+            print("[merge_files] === Merged input files to %s" % filename)    
+            ds_merged.to_netcdf(filename, engine='h5netcdf', mode='w', format='NETCDF4')
 
-    # remove input files
-    for f in merge_list:
-        os.remove(f)
+        # average
+        if "avg" in steps:
+            
+            # also calculate the average
+            print("[merge_files] === Average saved on %s" % avg_filename)        
+            ds_avg = ds_merged.mean(dim='time', keep_attrs=True, skipna=True)    
+            ds_avg.to_netcdf(avg_filename, engine='h5netcdf', mode='w', format='NETCDF4')
 
-    # also calculate the average
-    print("[merge_files] === Average saved on %s" % avg_filename)        
-    ds_avg = ds_merged.mean(dim='time', keep_attrs=True, skipna=True)    
-    ds_avg.to_netcdf(avg_filename, engine='h5netcdf', mode='w', format='NETCDF4')
+        
+        # remove input files
+        for f in merge_list:
+            os.remove(f)
 
     
 ######################################################
@@ -149,7 +186,7 @@ def merge_files(merge_list, filename, avg_filename):
 #
 ######################################################
 
-def gen_bathymetry(dataset, resolution, filename, mask, interp, bbox):
+def gen_bathymetry(dataset, resolution, filename, mask, interp, bbox, steps):
 
     """
     Function to generate the bathymetry
@@ -187,18 +224,19 @@ def gen_bathymetry(dataset, resolution, filename, mask, interp, bbox):
     grid_values[bool_mask] = np.nan
     
     # generate output file
-    print("[gen_bathymetry] === Generating NetCDF file...")    
-    ds = xr.Dataset(
-        {
-            'bathymetry': (('lat', 'lon'), grid_values)
-        },
+    if "bathy" in steps:
+        print("[gen_bathymetry] === Generating NetCDF file...")    
+        ds = xr.Dataset(
+            {
+                'bathymetry': (('lat', 'lon'), grid_values)
+            },
             coords={
                 'lon': ('lon', new_lons),
                 'lat': ('lat', new_lats),                
             }
-    )
-    ds.to_netcdf(filename)    
-    print("[gen_bathymetry] === Bathymetry file ready!")
+        )
+        ds.to_netcdf(filename)    
+        print("[gen_bathymetry] === Bathymetry file ready!")
     
     
 ######################################################
@@ -207,7 +245,7 @@ def gen_bathymetry(dataset, resolution, filename, mask, interp, bbox):
 #
 ######################################################
 
-def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, interp, bbox):
+def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, interp, bbox, steps):
 
     """
     Function to regularize a 4d variable
@@ -247,7 +285,7 @@ def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, inte
     # merge files and remove single ones
     filename = os.path.join(output_dir, f"{prefix}_{varname}.nc")
     avg_filename = os.path.join(output_dir, f"{prefix}_{varname}_AVG.nc")        
-    merge_files(merge_list, filename, avg_filename)
+    merge_files(merge_list, filename, avg_filename, steps)
 
             
 ######################################################
@@ -256,7 +294,7 @@ def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, inte
 #
 ######################################################
 
-def gen_3dvar(dataset, resolution, output_dir, prefix, varname, mask, interp, bbox):
+def gen_3dvar(dataset, resolution, output_dir, prefix, varname, mask, interp, bbox, steps):
 
     """
     Function to regularize a 3D variable
@@ -305,31 +343,39 @@ def gen_3dvar(dataset, resolution, output_dir, prefix, varname, mask, interp, bb
     filename = os.path.join(output_dir, f"{prefix}_{varname}.nc")
     avg_filename = os.path.join(output_dir, f"{prefix}_{varname}_AVG.nc")    
 
-    # output to NetCDF
-    print("[gen_3dvar] === Generating NetCDF file %s" % filename)        
-    ds = xr.Dataset(
-        {
-            varname: (('time', 'lat', 'lon'), full_data)
-        },
-        coords={
-            'lon': ('lon', new_lons),
-            'lat': ('lat', new_lats),
-            'time': ('time', dataset.variables['time'])
-        }
-    )
+    if ("mergetime" in steps) or ("avg" in steps):
+        
+        # output to NetCDF
+        print("[gen_3dvar] === Generating NetCDF file %s" % filename)        
+        ds = xr.Dataset(
+            {
+                varname: (('time', 'lat', 'lon'), full_data)
+            },
+            coords={
+                'lon': ('lon', new_lons),
+                'lat': ('lat', new_lats),
+                'time': ('time', dataset.variables['time'])
+            }
+        )
+        
+        encoding = {
+            varname: { "dtype" : "float32" }
+        } 
 
-    encoding = {
-        varname: { "dtype" : "float32" }
-    } 
-           
-    # Save the dataset
-    ds.to_netcdf(filename, encoding=encoding)
-    print("[gen_3dvar] === File %s ready!" % filename)
+        # merge on time
+        if "mergetime" in steps:
+            
+            # Save the dataset
+            ds.to_netcdf(filename, encoding=encoding)
+            print("[gen_3dvar] === File %s ready!" % filename)
 
-    # average on time
-    print("[merge_files] === Average saved on %s" % avg_filename)        
-    ds_avg = ds.mean(dim='time', keep_attrs=True, skipna=True)    
-    ds_avg.to_netcdf(avg_filename, engine='h5netcdf', mode='w', format='NETCDF4')
+        # average
+        if "avg" in steps:
+        
+            # average on time
+            print("[merge_files] === Average saved on %s" % avg_filename)        
+            ds_avg = ds.mean(dim='time', keep_attrs=True, skipna=True)    
+            ds_avg.to_netcdf(avg_filename, engine='h5netcdf', mode='w', format='NETCDF4')
     
 
 ######################################################
@@ -338,7 +384,7 @@ def gen_3dvar(dataset, resolution, output_dir, prefix, varname, mask, interp, bb
 #
 ######################################################
 
-def gen_landsea_mask(dataset, resolution, filename, bbox):
+def gen_landsea_mask(dataset, resolution, filename, bbox, steps):
 
     """
     Function to generate the landsea mask
@@ -393,8 +439,6 @@ def gen_landsea_mask(dataset, resolution, filename, bbox):
     print("[gen_landsea_mask] === Filling the triangles...")    
     inner_points = gpd.sjoin(gdf_points, gdf_triangles, how="inner", predicate='within')
     gdf_points.loc[inner_points.index, 'value'] = 1
-   
-    # ===== Output to NetCDF File =====
 
     # Prepare data to be stored on NetCDF file
     print("[gen_landsea_mask] === Preparing data for output to NetCDF file...")    
@@ -417,23 +461,27 @@ def gen_landsea_mask(dataset, resolution, filename, bbox):
     # save original coordinates
     latitudes = pivot_table.index.to_numpy()
     longitudes = pivot_table.columns.to_numpy()
-    
-    # save to NetCDF
-    print("[gen_landsea_mask] === Generating NetCDF file...")    
-    index = np.arange(len(gdf_points))
-    ds = xr.Dataset(
-        {
-            'nav_lon': (('lat')),
-            'nav_lat': (('lon')),
-            'land_sea_mask': (('lat', 'lon'), land_sea_mask)
-        },
+   
+    # ===== Output to NetCDF File =====
+
+    if "landsea" in steps:
+        
+        # save to NetCDF
+        print("[gen_landsea_mask] === Generating NetCDF file...")    
+        index = np.arange(len(gdf_points))
+        ds = xr.Dataset(
+            {
+                'nav_lon': (('lat')),
+                'nav_lat': (('lon')),
+                'land_sea_mask': (('lat', 'lon'), land_sea_mask)
+            },
             coords={
                 'lon': ('lon', longitudes),
                 'lat': ('lat', latitudes),                
             }
-    )
-    ds.to_netcdf(filename)
-    print("[gen_landsea_mask] === Land sea mask file ready!")
+        )
+        ds.to_netcdf(filename)
+        print("[gen_landsea_mask] === Land sea mask file ready!")
 
     # return the mask
     return land_sea_mask
@@ -450,8 +498,18 @@ if __name__ == "__main__":
     # ===== Input params management =====
     
     # read input params
-    options, remainder = getopt.getopt(sys.argv[1:], 'i:o:r:v:p:m:b:', ['input=', 'output=', 'resolution=', 'variables=', 'prefix=', 'interp=', 'bbox='])
+    options, remainder = getopt.getopt(sys.argv[1:], 'i:o:r:v:p:m:b:s:', ['input=', 'output=', 'resolution=', 'variables=', 'prefix=', 'interp=', 'bbox=', 'steps='])
 
+    # initialize mandatory options
+    output_directory = None
+    input_filename = None
+    prefix = ""
+    interp = "linear"
+    steps = []
+    bbox = None
+    resolution = None
+    variables = None    
+    
     # parse input params
     for opt, arg in options:
         
@@ -471,6 +529,10 @@ if __name__ == "__main__":
             interp = arg
             print("[main] === Interpolation method set to: %s" % interp)
 
+        elif opt in ('-s', '--steps'):
+            steps = arg.split(":")
+            print("[main] === Requested steps: %s" % steps)
+            
         elif opt in ('-b', '--bbox'):
             bbox = arg.split(":")
             print("[main] === Bounding box set to:")
@@ -491,6 +553,12 @@ if __name__ == "__main__":
         else:
             print("[main] === Unrecognized option %s. Will be ignored." % opt)
 
+
+    # check if we have the mandatory parameters
+    if any(var is None for var in [output_directory, input_filename, bbox, resolution_meters, variables]):
+        print_help()
+        sys.exit(1)
+            
     # ===== Input file opening and initialization =====
 
     # open dataset
@@ -505,14 +573,14 @@ if __name__ == "__main__":
     # generate the land sea mask
     print("[main] === Invoking gen_landsea_mask()")
     mask_filename = "%s/%s_landSeaMask.nc" % (output_directory, prefix)
-    mask = gen_landsea_mask(input_dataset, resolution_degrees, mask_filename, bbox)
+    mask = gen_landsea_mask(input_dataset, resolution_degrees, mask_filename, bbox, steps)
 
     # ===== Generation of bathymetry =====
 
     # generate the land sea mask
     print("[main] === Invoking gen_bathymetry()")
     bathy_filename = os.path.join(output_directory, "%s_bathymetry.nc" % (prefix))
-    gen_bathymetry(input_dataset, resolution_degrees, bathy_filename, mask, interp, bbox)
+    gen_bathymetry(input_dataset, resolution_degrees, bathy_filename, mask, interp, bbox, steps)
 
     # ===== Generation of 3d vars =====
     
@@ -523,7 +591,7 @@ if __name__ == "__main__":
             
             # if yes, treat it like a 3d var (node -> lat, lon)
             print("[main] === Processing %s as a 3D var" % v)
-            gen_3dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, interp, bbox)
+            gen_3dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, interp, bbox, steps)
             
     # ===== Generation of 4d vars =====
     
@@ -537,13 +605,13 @@ if __name__ == "__main__":
                         
                 # if yes, treat it like a 4d var (node -> lat, lon)
                 print("[main] === Processing %s as a 4D time/depth/lat/lon var" % v)                
-                gen_4dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, False, interp, bbox)
+                gen_4dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, False, interp, bbox, steps)
 
             else:
             
                 # if yes, treat it like a 4d var (node -> lat, lon)
                 print("[main] === Processing %s as a 4D time/depth/lat/lon nele-based var" % v)                
-                gen_4dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, True, interp, bbox)
+                gen_4dvar(input_dataset, resolution_degrees, output_directory, prefix, v, mask, True, interp, bbox, steps)
                                 
     # End of business
     print("[main] === EOB. Bye...")    
