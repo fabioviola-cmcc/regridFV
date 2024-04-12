@@ -24,7 +24,7 @@ The script is executed from the command line with several options to specify the
 - `-p`, `--prefix`: Prefix for the output filenames
 - `-m`, `--interp`: Interpolation method to be used (e.g., `linear`, `nearest`)
 - `-b`, `--bbox`: Bounding box defined as minLat:minLon:maxLat:maxLon
-- `-s`, `--steps`: Steps to perform, colon separated. Available options avg, mergetime, landsea, bathy
+- `-s`, `--steps`: Steps to perform, colon separated. Available options `avg`, `mergetime`, `landsea`, `bathy`
 
 Example call:
 
