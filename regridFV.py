@@ -59,7 +59,7 @@ def merge_datasets(datasets):
     """
     
     # Use Dask's lazy loading
-    return xr.merge(datasets, compat='override')
+    return xr.concat(datasets, dim="time")
 
 
 ######################################################
