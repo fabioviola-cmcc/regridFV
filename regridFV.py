@@ -118,7 +118,7 @@ def process_timestep4d(t, data, depth_levels, varname, grid_values, lon_reg, lat
 #
 ######################################################
 
-def merge_files(merge_list, filename):
+def merge_files(merge_list, filename, avg_filename):
 
     """
     As the name suggests, this function is used to merge
@@ -136,7 +136,12 @@ def merge_files(merge_list, filename):
     # remove input files
     for f in merge_list:
         os.remove(f)
-    
+
+    # also calculate the average
+    print("[merge_files] === Average saved on %s" % avg_filename)        
+    ds_avg = ds_merged.mean(dim='time', keep_attrs=True, skipna=True)    
+    ds_avg.to_netcdf(avg_filename, engine='h5netcdf', mode='w', format='NETCDF4')
+
     
 ######################################################
 #
@@ -240,8 +245,9 @@ def gen_4dvar(dataset, resolution, output_dir, prefix, varname, mask, nele, inte
         merge_list = [f.result() for f in futures]
 
     # merge files and remove single ones
-    filename = os.path.join(output_dir, f"{prefix}_{varname}.nc")    
-    merge_files(merge_list, filename)
+    filename = os.path.join(output_dir, f"{prefix}_{varname}.nc")
+    avg_filename = os.path.join(output_dir, f"{prefix}_{varname}_AVG.nc")        
+    merge_files(merge_list, filename, avg_filename)
 
             
 ######################################################
