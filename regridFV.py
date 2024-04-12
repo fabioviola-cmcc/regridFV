@@ -301,8 +301,9 @@ def gen_3dvar(dataset, resolution, output_dir, prefix, varname, mask, interp, bb
         # add this layer data to the full array
         full_data[t,:,:] = grid_values
 
-    # determine output filename
+    # determine output filenames
     filename = os.path.join(output_dir, f"{prefix}_{varname}.nc")
+    avg_filename = os.path.join(output_dir, f"{prefix}_{varname}_AVG.nc")    
 
     # output to NetCDF
     print("[gen_3dvar] === Generating NetCDF file %s" % filename)        
@@ -325,6 +326,11 @@ def gen_3dvar(dataset, resolution, output_dir, prefix, varname, mask, interp, bb
     ds.to_netcdf(filename, encoding=encoding)
     print("[gen_3dvar] === File %s ready!" % filename)
 
+    # average on time
+    print("[merge_files] === Average saved on %s" % avg_filename)        
+    ds_avg = ds.mean(dim='time', keep_attrs=True, skipna=True)    
+    ds_avg.to_netcdf(avg_filename, engine='h5netcdf', mode='w', format='NETCDF4')
+    
 
 ######################################################
 #
